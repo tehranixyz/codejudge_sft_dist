@@ -43,9 +43,8 @@ LANGUAGE_CONVENTIONS={
 
 
 # CodeJudge Target Models
-# codellama/CodeLlama-13b-Instruct-hf
-# codellama/CodeLlama-34b-Instruct-hf
-# mistralai/Mistral-7B-Instruct-v0.3
+# google/gemma-2-27b-it
+# mistralai/Codestral-22B-v0.1
 
 
 def apply_chat_template(tokenizer, logger, example):
@@ -73,6 +72,26 @@ def apply_chat_template(tokenizer, logger, example):
         logger.info("No tokenizer chat template exits, using default format!")
         example["text"] = f"Translate this following code snippet in {LANGUAGE_CONVENTIONS[example['source_language']]} to a code snippet in {LANGUAGE_CONVENTIONS[example['target_language']]}:\n\n'''\n{example['source_code']}\n'''\n\n\nAnswer:\n'''\n{example['target_code']}\n'''"
     return example
+
+def conversational_format(example):
+    instruction = f"""You are an expert in code translation between {LANGUAGE_CONVENTIONS[example['source_language']]} and {LANGUAGE_CONVENTIONS[example['target_language']]}.
+    Below is the source code written in {LANGUAGE_CONVENTIONS[example['source_language']]}:
+
+    ```
+    {example['source_code']}
+    ```
+
+    Your task is to translate this {LANGUAGE_CONVENTIONS[example['source_language']]} code into {LANGUAGE_CONVENTIONS[example['target_language']]}.
+    Return only the translated {LANGUAGE_CONVENTIONS[example['target_language']]} code, and include the commend |End-of-Code| at the end.
+    """
+
+    response = f"```\n{example['target_code']}\n```\n|End-of-Code|"
+    # messages = [
+    #         {'content': instruction, 'role': 'user'},
+    #         {'content': response, 'role': 'assistant'}
+    # ]
+
+    return {'prompt': instruction, 'completion': response}
 
 
 
@@ -118,7 +137,7 @@ def parse_args():
     parser.add_argument('--save_steps', type=int, default=50, help="How often to save the model")
     parser.add_argument('--eval_steps', type=int, default=50, help="How frequent to perform eval")
     parser.add_argument('--split_model', type=bool, default=True, help="split the model across devices")
-    parser.add_argument('--use_custom_loss', type=bool, default=True, help="Use SFTTrainer with custom loss")
+    parser.add_argument('--use_custom_loss', type=bool, default=False, help="Use SFTTrainer with custom loss")
     parser.add_argument('--lora_target_modules', nargs='+', type=str, default=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"], help='A list of modules to apply lora')
     args = parser.parse_args()
     return args
@@ -132,15 +151,23 @@ def sft_load_dataset(args, logger, tokenizer):
     }
     dataset = datasets.load_dataset("json", data_files=datafiles)
 
-    partial_apply_chat_template = partial(apply_chat_template,  tokenizer, logger)
-
-    logger.info("Loaded datasets. Apply chat template!")
-
     dataset = dataset.map(
-        partial_apply_chat_template,
+        conversational_format,
         num_proc=args.num_proc_dataset,
-        desc="Applying chat template!!!"
+        desc="Conversational format",
+        remove_columns=dataset['train'].column_names
     )
+    print(dataset)
+
+    # partial_apply_chat_template = partial(apply_chat_template,  tokenizer, logger)
+
+    # logger.info("Loaded datasets. Apply chat template!")
+
+    # dataset = dataset.map(
+    #     partial_apply_chat_template,
+    #     num_proc=args.num_proc_dataset,
+    #     desc="Applying chat template!!!"
+    # )
 
     # for index in random.sample(range(len(dataset['train'])), 3):
     #    logger.info(f"Sample {index} of the processed training set:\n\n{dataset['train']['text']}")
@@ -237,7 +264,7 @@ def main():
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
 
-        def compute_loss(self, model, inputs, return_outputs=False):
+        def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
             # Forward pass with labels to compute the loss
             outputs = model(**inputs, labels=inputs["input_ids"], return_dict=True)
             loss = outputs.loss  # Extract only the loss
@@ -288,7 +315,7 @@ def main():
             ddp_find_unused_parameters=False,
             run_name=args.run_name,
             gradient_checkpointing_kwargs={'use_reentrant':False},
-            dataset_text_field="text",
+            #dataset_text_field="text",
             dataset_batch_size=args.dataset_batch_size,
             max_seq_length=args.max_seq_length,
             dataset_num_proc=args.dataset_num_proc,
@@ -313,13 +340,13 @@ def main():
         trainer = SFTTrainer(
                 model=model,
                 args=sft_config,
-                data_collator=transformers.DataCollatorForSeq2Seq(
-                    tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
-                ),
+                # data_collator=transformers.DataCollatorForSeq2Seq(
+                #     tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
+                # ),
                 train_dataset=train_ds,
                 eval_dataset=validation_ds,
                 tokenizer=tokenizer,
-                packing=True,
+                #packing=True,
                 peft_config=peft_config,
         )
 
