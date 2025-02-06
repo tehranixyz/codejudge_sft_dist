@@ -1,0 +1,30 @@
+#!/bin/bash
+
+# Copy/paste this job script into a text file and submit with the command:
+#    sbatch thefilename
+
+#SBATCH --time=12:15:00   # walltime limit (HH:MM:SS)
+#SBATCH --nodes=1   # number of nodes
+#SBATCH --ntasks-per-node=16   # 16 processor core(s) per node
+#SBATCH --mem=10G   # maximum memory per node
+#SBATCH --gres=gpu:a100:2
+#SBATCH --job-name="sft_distribution"
+#SBATCH --mail-user=hungphd@iastate.edu   # email address
+#SBATCH --mail-type=BEGIN
+#SBATCH --mail-type=END
+#SBATCH --mail-type=FAIL
+#SBATCH --output="hung-log.txt" # job standard output file (%j replaced by job id)
+#SBATCH --error="hung-err.txt" # job standard error file (%j replaced by job id)
+
+# LOAD MODULES, INSERT CODE, AND RUN YOUR PROGRAMS HERE
+
+
+
+# LOAD MODULES, INSERT CODE, AND RUN YOUR PROGRAMS HERE
+cd /work/LAS/jannesar-lab/hungphd/git/
+module load cuda/12.4.1-cz3ljd3
+module load python
+source hungpy39/bin/activate
+echo "abc"
+cd /work/LAS/jannesar-lab/hungphd/git/codejudge_sft_dist/
+python sft_distribution.py --num_proc_dataset=1 --dataset_num_proc=1 --dataset_loc="/work/LAS/jannesar-lab/hungphd/git/sft_datasets/" --train_dataset_name="combine_train_small.jsonl" --validation_dataset_name="combine_validation_small.jsonl"  --llm_path="/work/LAS/jannesar-lab/hungphd/git/gemma-2b-it/" --output_loc="/work/LAS/jannesar-lab/hungphd/git/output_sft_gemma-2b/loc/" --log_dir="/work/LAS/jannesar-lab/hungphd/git/output_sft_gemma-2b/log/" --run_name="run1" --WANDB_CACHE_DIR="/work/LAS/jannesar-lab/hungphd/git/output_sft_gemma-2b/wandb/" --HF_HOME="/work/LAS/jannesar-lab/hungphd/git/output_sft_gemma-2b/HF/" --do_custom_loss="False"
