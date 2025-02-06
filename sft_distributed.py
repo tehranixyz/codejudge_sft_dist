@@ -1,9 +1,4 @@
 import os
-os.environ["HF_HUB_OFFLINE"]='1'
-os.environ["WANDB_MODE"] = "offline"
-os.environ["WANDB_CACHE_DIR"] = "/home/codejudge/sft/.wandbcache"
-os.environ['HF_HOME'] = '/home/codejudge/sft/.hfcache'
-os.environ['PYTORCH_CUDA_ALLOC_CONF']='expandable_segments:True'
 import wandb
 import json
 import os.path
@@ -109,6 +104,9 @@ def parse_args():
     parser.add_argument('--run_name', type=str, required=True, help="Run name for experiment.")
     parser.add_argument('--num_proc_dataset', type=int, required=True, help="Number of processor for dataset map.")
     parser.add_argument('--dataset_num_proc', type=int, required=True, help="Number of processor to use to tokenize the data.")
+    parser.add_argument('--WANDB_CACHE_DIR', type=str, required=True, help="Wandb cache dir")
+    parser.add_argument('--HF_HOME', type=str, required=True, help="HF HOME LOCATION")
+
     # Default training parameters
     parser.add_argument('--per_device_train_batch_size', type=int, default=2, help="Per device train batch size.")
     parser.add_argument('--per_device_eval_batch_size', type=int, default=8, help="Per device eval batch size.")
@@ -183,6 +181,11 @@ def sft_load_dataset(args, logger, tokenizer):
 def main():
     args = parse_args()
     os.environ["WANDB_LOG_MODEL"] = "checkpoint"  # log all model checkpoints
+    os.environ["HF_HUB_OFFLINE"] = '1'
+    os.environ["WANDB_MODE"] = "offline"
+    os.environ["WANDB_CACHE_DIR"] = args.WANDB_CACHE_DIR
+    os.environ['HF_HOME'] = args.HF_HOME
+    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
     wandb.init(project="codejudge", config=vars(args), name=f"codejudge-{args.run_name}-{time.strftime('%Y%m%d-%H%M%S')}")
 
