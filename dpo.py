@@ -1,8 +1,8 @@
 import os
 os.environ["HF_HUB_OFFLINE"]='1'
 os.environ["WANDB_MODE"] = "offline"
-os.environ["WANDB_CACHE_DIR"] = "/home/codejudge/dpo/.wandbcache"
-os.environ['HF_HOME'] = '/home/codejudge/dpo/.hfcache'
+os.environ["WANDB_CACHE_DIR"] = "/home/codejudge/sft/.wandbcache"
+os.environ['HF_HOME'] = '/home/codejudge/sft/.hfcache'
 os.environ['PYTORCH_CUDA_ALLOC_CONF']='expandable_segments:True'
 import wandb
 import json
@@ -47,51 +47,6 @@ LANGUAGE_CONVENTIONS={
 # mistralai/Codestral-22B-v0.1
 
 
-def apply_chat_template(tokenizer, logger, example):
-    instruction = f"""You are an expert in code translation between {LANGUAGE_CONVENTIONS[example['source_language']]} and {LANGUAGE_CONVENTIONS[example['target_language']]}.
-    Below is the source code written in {LANGUAGE_CONVENTIONS[example['source_language']]}:
-
-    ```
-    {example['source_code']}
-    ```
-
-    Your task is to translate this {LANGUAGE_CONVENTIONS[example['source_language']]} code into {LANGUAGE_CONVENTIONS[example['target_language']]}.
-    Return only the translated {LANGUAGE_CONVENTIONS[example['target_language']]} code, and include the commend |End-of-Code| at the end.
-    """
-
-    response = f"```\n{example['target_code']}\n```\n|End-of-Code|"
-    messages = [
-            {'content': instruction, 'role': 'user'},
-            {'content': response, 'role': 'assistant'}
-    ]
-    if tokenizer.chat_template:
-        # logger.info(f"Using tokenizer chat template {tokenizer.chat_template}!")
-        example["text"] = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    else:
-        raise ValueError("For now we do not support tokenizers without chat template!")
-        logger.info("No tokenizer chat template exits, using default format!")
-        example["text"] = f"Translate this following code snippet in {LANGUAGE_CONVENTIONS[example['source_language']]} to a code snippet in {LANGUAGE_CONVENTIONS[example['target_language']]}:\n\n'''\n{example['source_code']}\n'''\n\n\nAnswer:\n'''\n{example['target_code']}\n'''"
-    return example
-
-def conversational_format(example):
-    instruction = f"""You are an expert in code translation between {LANGUAGE_CONVENTIONS[example['source_language']]} and {LANGUAGE_CONVENTIONS[example['target_language']]}.
-    Below is the source code written in {LANGUAGE_CONVENTIONS[example['source_language']]}:
-
-    ```
-    {example['source_code']}
-    ```
-
-    Your task is to translate this {LANGUAGE_CONVENTIONS[example['source_language']]} code into {LANGUAGE_CONVENTIONS[example['target_language']]}.
-    Return only the translated {LANGUAGE_CONVENTIONS[example['target_language']]} code, and include the commend |End-of-Code| at the end.
-    """
-
-    response = f"```\n{example['target_code']}\n```\n|End-of-Code|"
-    # messages = [
-    #         {'content': instruction, 'role': 'user'},
-    #         {'content': response, 'role': 'assistant'}
-    # ]
-
-    return {'prompt': instruction, 'completion': response}
 
 
 
@@ -143,43 +98,22 @@ def parse_args():
     return args
 
 
-def sft_load_dataset(args, logger, tokenizer):
+def dpo_load_dataset(args, logger, tokenizer):
 
     datafiles = {
-        'train': os.path.join(args.dataset_loc, args.train_dataset_name),
-        'validation': os.path.join(args.dataset_loc, args.validation_dataset_name)
+        'train': os.path.join(args.dataset_loc)
     }
     dataset = datasets.load_dataset("json", data_files=datafiles)
 
-    dataset = dataset.map(
-        conversational_format,
-        num_proc=args.num_proc_dataset,
-        desc="Conversational format",
-        remove_columns=dataset['train'].column_names
-    )
-    print(dataset)
-
-    # partial_apply_chat_template = partial(apply_chat_template,  tokenizer, logger)
-
-    # logger.info("Loaded datasets. Apply chat template!")
-
-    # dataset = dataset.map(
-    #     partial_apply_chat_template,
-    #     num_proc=args.num_proc_dataset,
-    #     desc="Applying chat template!!!"
-    # )
-
-    # for index in random.sample(range(len(dataset['train'])), 3):
-    #    logger.info(f"Sample {index} of the processed training set:\n\n{dataset['train']['text']}")
-    logger.info("Done with dataset!")
+    dataset = dataset['train'].train_test_split(test_size=0.1)
 
     dataset_train = dataset['train'].shuffle()
-    dataset_val = dataset['validation'].shuffle()
+    dataset_val = dataset['test'].shuffle()
 
+    arr_path_content=args.dataset_loc.split(os.path.sep)
+    dataset_train.to_json(args.output_loc+args.train_dataset_name)
+    dataset_val.to_json(args.output_loc + args.validation_dataset_name)
     return dataset_train, dataset_val
-
-
-
 def main():
     args = parse_args()
     os.environ["WANDB_LOG_MODEL"] = "checkpoint"  # log all model checkpoints
@@ -243,7 +177,7 @@ def main():
 
     # Loading training and validation datasets.
     logger.info(f"Loading training {args.train_dataset_name} and validation dataset {args.validation_dataset_name}")
-    train_ds, validation_ds = sft_load_dataset(args, logger, tokenizer)
+    train_ds, validation_ds = dpo_load_dataset(args, logger, tokenizer)
 
     peft_config = None
     if args.is_peft:
@@ -347,10 +281,11 @@ def main():
             train_dataset=train_ds,
             eval_dataset=validation_ds,
             tokenizer=tokenizer,
-            max_length=args.max_seq_length,
-            max_prompt_length=args.max_seq_length,
-            beta=args.dpo_config_beta,
-            loss_type=args.dpo_config_loss_type,
+            # max_length=args.max_seq_length,
+            # max_prompt_length=args.max_seq_length,
+            # no attribute
+            # beta=args.dpo_config_beta,
+            # loss_type=args.dpo_config_loss_type,
 
         )
 
