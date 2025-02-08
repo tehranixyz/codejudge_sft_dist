@@ -10,17 +10,17 @@ import os.path
 import sys
 sys.path.append("..")
 import argparse
+import numpy as np
 import traceback
 import datasets
 from transformers import AutoTokenizer
-from datasets import load_dataset,load_from_disk
 import pathlib
 import logging
 import random
 import torch
 from functools import partial
 import transformers
-from datasets import load_from_disk,load_dataset
+from datasets import load_from_disk, load_dataset, concatenate_datasets
 from rich.logging import RichHandler
 from transformers import set_seed
 from trl import SFTTrainer, SFTConfig
@@ -40,6 +40,13 @@ LANGUAGE_CONVENTIONS={
     'java':'Java',
     'python':'Python'
 }
+
+def apply_seed(seed: int = 42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    set_seed(seed)
 
 
 # CodeJudge Target Models
@@ -139,17 +146,54 @@ def parse_args():
     parser.add_argument('--split_model', type=bool, default=True, help="split the model across devices")
     parser.add_argument('--use_custom_loss', type=bool, default=False, help="Use SFTTrainer with custom loss")
     parser.add_argument('--lora_target_modules', nargs='+', type=str, default=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"], help='A list of modules to apply lora')
+    parser.add_argument('--num_train_samples_per_translation', type=int, default=0, help="How many train samples per each translation direction")
     args = parser.parse_args()
     return args
 
 
-def sft_load_dataset(args, logger, tokenizer):
+def sft_load_dataset(args, logger):
 
     datafiles = {
         'train': os.path.join(args.dataset_loc, args.train_dataset_name),
         'validation': os.path.join(args.dataset_loc, args.validation_dataset_name)
     }
     dataset = datasets.load_dataset("json", data_files=datafiles)
+
+    if args.num_train_samples_per_translation > 0:
+        # Dataset sampling
+        logger.info(f"Sampling {args.num_train_samples_per_translation} per each translation direction.")
+        ## Filtering
+        dataset_dir_1 = (
+            dataset["train"]
+            .filter(
+                lambda example: example["source_language"] == "cpp"
+                and example["target_language"] == "python",
+                num_proc=args.num_proc_dataset,
+            )
+            .select(range(args.num_train_samples_per_translation))
+        )
+
+        dataset_dir_2 = (
+            dataset["train"]
+            .filter(
+                lambda example: example["source_language"] == "java"
+                and example["target_language"] == "cpp",
+                num_proc=args.num_proc_dataset,
+            )
+            .select(range(args.num_train_samples_per_translation))
+        )
+
+        dataset_dir_3 = (
+            dataset["train"]
+            .filter(
+                lambda example: example["source_language"] == "java"
+                and example["target_language"] == "python",
+                num_proc=args.num_proc_dataset,
+            )
+            .select(range(args.num_train_samples_per_translation))
+        )
+        # Concatenating
+        dataset['train'] = concatenate_datasets([dataset_dir_1, dataset_dir_2, dataset_dir_3])
 
     dataset = dataset.map(
         conversational_format,
@@ -159,18 +203,6 @@ def sft_load_dataset(args, logger, tokenizer):
     )
     print(dataset)
 
-    # partial_apply_chat_template = partial(apply_chat_template,  tokenizer, logger)
-
-    # logger.info("Loaded datasets. Apply chat template!")
-
-    # dataset = dataset.map(
-    #     partial_apply_chat_template,
-    #     num_proc=args.num_proc_dataset,
-    #     desc="Applying chat template!!!"
-    # )
-
-    # for index in random.sample(range(len(dataset['train'])), 3):
-    #    logger.info(f"Sample {index} of the processed training set:\n\n{dataset['train']['text']}")
     logger.info("Done with dataset!")
 
     dataset_train = dataset['train'].shuffle()
@@ -182,6 +214,7 @@ def sft_load_dataset(args, logger, tokenizer):
 
 def main():
     args = parse_args()
+    apply_seed(args.random_seed)
     os.environ["WANDB_LOG_MODEL"] = "checkpoint"  # log all model checkpoints
 
     wandb.init(project="codejudge", config=vars(args), name=f"codejudge-{args.run_name}-{time.strftime('%Y%m%d-%H%M%S')}")
@@ -243,7 +276,7 @@ def main():
 
     # Loading training and validation datasets.
     logger.info(f"Loading training {args.train_dataset_name} and validation dataset {args.validation_dataset_name}")
-    train_ds, validation_ds = sft_load_dataset(args, logger, tokenizer)
+    train_ds, validation_ds = sft_load_dataset(args, logger)
 
     peft_config = None
     if args.is_peft:
