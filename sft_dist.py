@@ -1,9 +1,12 @@
 import os
+
 os.environ["HF_HUB_OFFLINE"]='1'
 os.environ["WANDB_MODE"] = "offline"
 os.environ["WANDB_CACHE_DIR"] = "/home/codejudge/sft/.wandbcache"
 os.environ['HF_HOME'] = '/home/codejudge/sft/.hfcache'
 os.environ['PYTORCH_CUDA_ALLOC_CONF']='expandable_segments:True'
+from typing import Callable, Optional
+import warnings
 import wandb
 import json
 import os.path
@@ -34,6 +37,7 @@ from peft import LoraConfig
 from transformers import BitsAndBytesConfig
 from accelerate import PartialState
 from accelerate import Accelerator
+from trl.extras.dataset_formatting import get_formatting_func_from_dataset
 
 LANGUAGE_CONVENTIONS={
     'cpp':'C++',
@@ -52,56 +56,6 @@ def apply_seed(seed: int = 42):
 # CodeJudge Target Models
 # google/gemma-2-27b-it
 # mistralai/Codestral-22B-v0.1
-
-
-def apply_chat_template(tokenizer, logger, example):
-    instruction = f"""You are an expert in code translation between {LANGUAGE_CONVENTIONS[example['source_language']]} and {LANGUAGE_CONVENTIONS[example['target_language']]}.
-    Below is the source code written in {LANGUAGE_CONVENTIONS[example['source_language']]}:
-
-    ```
-    {example['source_code']}
-    ```
-
-    Your task is to translate this {LANGUAGE_CONVENTIONS[example['source_language']]} code into {LANGUAGE_CONVENTIONS[example['target_language']]}.
-    Return only the translated {LANGUAGE_CONVENTIONS[example['target_language']]} code, and include the commend |End-of-Code| at the end.
-    """
-
-    response = f"```\n{example['target_code']}\n```\n|End-of-Code|"
-    messages = [
-            {'content': instruction, 'role': 'user'},
-            {'content': response, 'role': 'assistant'}
-    ]
-    if tokenizer.chat_template:
-        # logger.info(f"Using tokenizer chat template {tokenizer.chat_template}!")
-        example["text"] = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    else:
-        raise ValueError("For now we do not support tokenizers without chat template!")
-        logger.info("No tokenizer chat template exits, using default format!")
-        example["text"] = f"Translate this following code snippet in {LANGUAGE_CONVENTIONS[example['source_language']]} to a code snippet in {LANGUAGE_CONVENTIONS[example['target_language']]}:\n\n'''\n{example['source_code']}\n'''\n\n\nAnswer:\n'''\n{example['target_code']}\n'''"
-    return example
-
-def conversational_format(example):
-    instruction = f"""You are an expert in code translation between {LANGUAGE_CONVENTIONS[example['source_language']]} and {LANGUAGE_CONVENTIONS[example['target_language']]}.
-    Below is the source code written in {LANGUAGE_CONVENTIONS[example['source_language']]}:
-
-    ```
-    {example['source_code']}
-    ```
-
-    Your task is to translate this {LANGUAGE_CONVENTIONS[example['source_language']]} code into {LANGUAGE_CONVENTIONS[example['target_language']]}.
-    Return only the translated {LANGUAGE_CONVENTIONS[example['target_language']]} code, and include the commend |End-of-Code| at the end.
-    """
-
-    response = f"```\n{example['target_code']}\n```\n|End-of-Code|"
-    # messages = [
-    #         {'content': instruction, 'role': 'user'},
-    #         {'content': response, 'role': 'assistant'}
-    # ]
-
-    return {'prompt': instruction, 'completion': response}
-
-
-
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Script for SFT Tuning.")
@@ -150,8 +104,84 @@ def parse_args():
     args = parser.parse_args()
     return args
 
+def conversational_format(example):
+    instruction = f"""You are an expert in code translation between {LANGUAGE_CONVENTIONS[example['source_language']]} and {LANGUAGE_CONVENTIONS[example['target_language']]}.
+    Below is the source code written in {LANGUAGE_CONVENTIONS[example['source_language']]}:
 
-def sft_load_dataset(args, logger):
+    ```
+    {example['source_code']}
+    ```
+
+    Your task is to translate this {LANGUAGE_CONVENTIONS[example['source_language']]} code into {LANGUAGE_CONVENTIONS[example['target_language']]}.
+    Return only the translated {LANGUAGE_CONVENTIONS[example['target_language']]} code, and include the commend |End-of-Code| at the end.
+    """
+
+    response = f"```\n{example['target_code']}\n```\n|End-of-Code|"
+    # messages = [
+    #         {'content': instruction, 'role': 'user'},
+    #         {'content': response, 'role': 'assistant'}
+    # ]
+
+    return {'prompt': instruction, 'completion': response}
+
+def _prepare_non_packed_dataloader(
+    args,
+    processing_class,
+    dataset,
+    dataset_text_field: str,
+    max_seq_length,
+    formatting_func: Optional[Callable] = None,
+    add_special_tokens=True,
+    remove_unused_columns=True,
+):
+    # Inspired from: https://huggingface.co/learn/nlp-course/chapter7/6?fw=pt
+    def tokenize(element):
+        outputs = processing_class(
+            element[dataset_text_field] if formatting_func is None else formatting_func(element),
+            add_special_tokens=add_special_tokens,
+            truncation=True,
+            padding=False,
+            max_length=max_seq_length,
+            return_overflowing_tokens=False,
+            return_length=False,
+        )
+
+        if formatting_func is not None and not isinstance(formatting_func(element), list):
+            raise ValueError(
+                "The `formatting_func` should return a list of processed strings since it can lead to silent bugs."
+            )
+
+        return {"input_ids": outputs["input_ids"], "attention_mask": outputs["attention_mask"]}
+
+    signature_columns = ["input_ids", "labels", "attention_mask"]
+
+    if dataset.column_names is not None:  # None for IterableDataset
+        extra_columns = list(set(dataset.column_names) - set(signature_columns))
+    else:
+        extra_columns = []
+
+    if not remove_unused_columns and len(extra_columns) > 0:
+        warnings.warn(
+            "You passed `remove_unused_columns=False` on a non-packed dataset. This might create some issues with "
+            "the default collator and yield to errors. If you want to inspect dataset other columns (in this "
+            f"case {extra_columns}), you can subclass `DataCollatorForLanguageModeling` in case you used the "
+            "default collator and create your own data collator in order to inspect the unused dataset columns.",
+            UserWarning,
+        )
+
+    map_kwargs = {
+        "batched": True,
+        "remove_columns": dataset.column_names if remove_unused_columns else None,
+        "batch_size": args.dataset_batch_size,
+    }
+    if isinstance(dataset, datasets.Dataset):
+        map_kwargs["num_proc"] = args.dataset_num_proc  # this arg is not available for IterableDataset
+    tokenized_dataset = dataset.map(tokenize, **map_kwargs)
+
+    return tokenized_dataset
+
+
+def sft_load_dataset(args, logger, tokenizer):
 
     datafiles = {
         'train': os.path.join(args.dataset_loc, args.train_dataset_name),
@@ -159,6 +189,8 @@ def sft_load_dataset(args, logger):
     }
     dataset = datasets.load_dataset("json", data_files=datafiles)
 
+
+    # Performing sampling
     if args.num_train_samples_per_translation > 0:
         # Dataset sampling
         logger.info(f"Sampling {args.num_train_samples_per_translation} per each translation direction.")
@@ -201,13 +233,39 @@ def sft_load_dataset(args, logger):
         desc="Conversational format",
         remove_columns=dataset['train'].column_names
     )
+
+
     print(dataset)
 
-    logger.info("Done with dataset!")
-
     dataset_train = dataset['train'].shuffle()
-    dataset_val = dataset['validation'].shuffle()
+    dataset_val = dataset['validation'].shuffle()    
 
+    # Tokenize Dataset
+    logger.info(f"Tokenizing the dataset")
+    formatting_func = get_formatting_func_from_dataset(dataset_train, tokenizer)
+    dataset_train = _prepare_non_packed_dataloader(
+        args,
+        tokenizer,
+        dataset_train,
+        "text",
+        args.max_seq_length,
+        formatting_func=formatting_func,
+        add_special_tokens=True,
+        remove_unused_columns=True,
+    )
+
+    dataset_val = _prepare_non_packed_dataloader(
+        args,
+        tokenizer,
+        dataset_val,
+        "text",
+        args.max_seq_length,
+        formatting_func=formatting_func,
+        add_special_tokens=True,
+        remove_unused_columns=True,
+    )
+
+    logger.info("Done with dataset!")
     return dataset_train, dataset_val
 
 
@@ -276,7 +334,7 @@ def main():
 
     # Loading training and validation datasets.
     logger.info(f"Loading training {args.train_dataset_name} and validation dataset {args.validation_dataset_name}")
-    train_ds, validation_ds = sft_load_dataset(args, logger)
+    train_ds, validation_ds = sft_load_dataset(args, logger, tokenizer)
 
     peft_config = None
     if args.is_peft:
@@ -353,6 +411,7 @@ def main():
             dataset_batch_size=args.dataset_batch_size,
             max_seq_length=args.max_seq_length,
             dataset_num_proc=args.dataset_num_proc,
+            dataset_kwargs={"skip_prepare_dataset":True},
             # metric_for_best_model="eval_loss",
             # greater_is_better=False,
         )
