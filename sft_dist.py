@@ -117,7 +117,7 @@ def parse_args():
     parser.add_argument('--optim', type=str, default="adamw_8bit", help="Define optimizer.")
     parser.add_argument('--num_train_epochs', type=float, default=5, help="num of training epochs")
     parser.add_argument('--bias', type=str, default='none', help="bias")
-    parser.add_argument('--lora_dropout', type=int, default=0, help="lora_dropout")
+    parser.add_argument('--lora_dropout', type=float, default=0, help="lora_dropout")
     parser.add_argument('--lora_alpha', type=int, default=128, help="lora_alpha")
     parser.add_argument('--lora_rank', type=int, default=64, help="lora rank")
     parser.add_argument('--random_seed', type=int, default=3407, help="random seed")
