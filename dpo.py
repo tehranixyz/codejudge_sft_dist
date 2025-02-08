@@ -1,8 +1,8 @@
 import os
 os.environ["HF_HUB_OFFLINE"]='1'
 os.environ["WANDB_MODE"] = "offline"
-os.environ["WANDB_CACHE_DIR"] = "/home/codejudge/sft/.wandbcache"
-os.environ['HF_HOME'] = '/home/codejudge/sft/.hfcache'
+os.environ["WANDB_CACHE_DIR"] = "/home/codejudge/dpo/.wandbcache"
+os.environ['HF_HOME'] = '/home/codejudge/dpo/.hfcache'
 os.environ['PYTORCH_CUDA_ALLOC_CONF']='expandable_segments:True'
 import wandb
 import json
@@ -23,7 +23,7 @@ import transformers
 from datasets import load_from_disk,load_dataset
 from rich.logging import RichHandler
 from transformers import set_seed
-from trl import SFTTrainer, SFTConfig
+from trl import DPOTrainer,DPOConfig
 # from unsloth import FastLanguageModel
 from transformers import TrainingArguments, AutoModelForCausalLM
 import logging
@@ -258,9 +258,9 @@ def main():
             target_modules=args.lora_target_modules,
         )
 
-    logger.info("Creating SFT trainer!")
+    logger.info("Creating DPO trainer!")
 
-    class CustomSFTTrainer(SFTTrainer):
+    class CustomDPOTrainer(DPOTrainer):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
 
@@ -288,7 +288,7 @@ def main():
             'fsdp_use_orig_params': True,
         }
 
-    sft_config = SFTConfig(
+    dpo_config = DPOConfig(
             per_device_train_batch_size=args.per_device_train_batch_size,
             per_device_eval_batch_size=args.per_device_eval_batch_size,
             gradient_accumulation_steps=args.gradient_accumulation_steps,
@@ -316,8 +316,10 @@ def main():
             run_name=args.run_name,
             gradient_checkpointing_kwargs={'use_reentrant':False},
             #dataset_text_field="text",
-            dataset_batch_size=args.dataset_batch_size,
-            max_seq_length=args.max_seq_length,
+
+            # dataset_batch_size=args.dataset_batch_size,
+            max_prompt_length=args.max_seq_length,
+            max_length=args.max_seq_length,
             dataset_num_proc=args.dataset_num_proc,
             # metric_for_best_model="eval_loss",
             # greater_is_better=False,
@@ -325,9 +327,9 @@ def main():
 
 
     if args.use_custom_loss:
-        trainer = CustomSFTTrainer(
+        trainer = CustomDPOTrainer(
                 model=model,
-                args=sft_config,
+                args=dpo_config,
                 data_collator=transformers.DataCollatorForSeq2Seq(
                     tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
                 ),
@@ -337,18 +339,23 @@ def main():
                 peft_config=peft_config,
         )
     else:
-        trainer = SFTTrainer(
-                model=model,
-                args=sft_config,
-                # data_collator=transformers.DataCollatorForSeq2Seq(
-                #     tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
-                # ),
-                train_dataset=train_ds,
-                eval_dataset=validation_ds,
-                tokenizer=tokenizer,
-                #packing=True,
-                peft_config=peft_config,
+        trainer = DPOTrainer(
+            model,
+            ref_model=None,  # set to none since we use peft
+            peft_config=peft_config,
+            args=dpo_config,
+            train_dataset=train_ds,
+            eval_dataset=validation_ds,
+            tokenizer=tokenizer,
+            max_length=args.max_seq_length,
+            max_prompt_length=args.max_seq_length,
+            beta=args.dpo_config_beta,
+            loss_type=args.dpo_config_loss_type,
+
         )
+
+
+
 
     ###############
     # Training loop
