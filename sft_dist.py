@@ -313,6 +313,7 @@ def main():
             optim=args.optim,
             seed=args.random_seed,
             ddp_find_unused_parameters=False,
+            ddp_timeout=100000,
             run_name=args.run_name,
             gradient_checkpointing_kwargs={'use_reentrant':False},
             #dataset_text_field="text",
