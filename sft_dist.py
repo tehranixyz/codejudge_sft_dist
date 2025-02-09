@@ -70,6 +70,7 @@ def parse_args():
     parser.add_argument('--num_proc_dataset', type=int, required=True, help="Number of processor for dataset map.")
     parser.add_argument('--dataset_num_proc', type=int, required=True, help="Number of processor to use to tokenize the data.")
     # Default training parameters
+    parser.add_argument('--attn_implementation', type=str, default="flash_attention_2", help="Name of the attention implementation library.") # also eager for gemma
     parser.add_argument('--per_device_train_batch_size', type=int, default=2, help="Per device train batch size.")
     parser.add_argument('--per_device_eval_batch_size', type=int, default=8, help="Per device eval batch size.")
     parser.add_argument('--gradient_accumulation_steps', type=int, default=4, help="Gradient accumulation steps.")
@@ -326,7 +327,7 @@ def main():
 
     model = AutoModelForCausalLM.from_pretrained(
         pretrained_model_name_or_path=args.llm_path,
-        attn_implementation="flash_attention_2",
+        attn_implementation=args.attn_implementation,
         device_map=device_map,
         quantization_config=bnb_config,
         revision="refs/pr/1"
