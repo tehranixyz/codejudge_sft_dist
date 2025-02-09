@@ -287,7 +287,7 @@ def main():
     apply_seed(args.random_seed)
     os.environ["WANDB_LOG_MODEL"] = "checkpoint"  # log all model checkpoints
 
-    wandb.init(project="codejudge", config=vars(args), name=f"codejudge-{args.run_name}-{time.strftime('%Y%m%d-%H%M%S')}")
+    wandb.init(project="codejudge", config=vars(args), name=f"{args.run_name}")
 
 
     pathlib.Path(args.log_dir).mkdir(exist_ok=True)
