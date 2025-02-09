@@ -186,7 +186,7 @@ def sft_load_dataset(args, logger, tokenizer):
 
     if args.tokenized:
         logger.info(f"Loading tokenized dataset.")
-        dataset_train = load_from_disk(os.path.join(args.dataset_loc, args.train_dataset_name)) 
+        dataset_train = load_from_disk(os.path.join(args.dataset_loc, args.train_dataset_name))
         dataset_val = load_from_disk(os.path.join(args.dataset_loc, args.validation_dataset_name))
         return dataset_train, dataset_val
 
@@ -245,7 +245,7 @@ def sft_load_dataset(args, logger, tokenizer):
     print(dataset)
 
     dataset_train = dataset['train'].shuffle()
-    dataset_val = dataset['validation'].shuffle()    
+    dataset_val = dataset['validation'].shuffle()
 
     # Tokenize Dataset
     logger.info(f"Tokenizing the dataset")
@@ -330,7 +330,6 @@ def main():
         attn_implementation=args.attn_implementation,
         device_map=device_map,
         quantization_config=bnb_config,
-        revision="refs/pr/1"
     )
     model.config.use_cache = False
     model.config.pretraining_tp = 1
@@ -384,6 +383,10 @@ def main():
             'fsdp_state_dict_type': 'SHARDED_STATE_DICT',
             'fsdp_sync_module_states': True,
             'fsdp_use_orig_params': True,
+            # Gemma
+            # "fsdp_transformer_layer_cls_to_wrap": ["GemmaDecoderLayer"],
+            # "xla": True,
+            # "xla_fsdp_grad_ckpt": True
         }
 
     sft_config = SFTConfig(
@@ -407,6 +410,8 @@ def main():
             logging_dir=args.log_dir,
             output_dir=args.output_loc,
             fsdp_config=fsdp_config,
+            dataloader_drop_last = True,  # Required for SPMD.
+            # fsdp="full_shard",
             gradient_checkpointing=True,
             optim=args.optim,
             seed=args.random_seed,
@@ -483,4 +488,3 @@ def main():
     print('end')
 
 main()
-
