@@ -70,6 +70,7 @@ def parse_args():
     parser.add_argument('--num_proc_dataset', type=int, required=True, help="Number of processor for dataset map.")
     parser.add_argument('--dataset_num_proc', type=int, required=True, help="Number of processor to use to tokenize the data.")
     # Default training parameters
+    parser.add_argument('--dataset_map_batch_size', type=int, default=1000, help="The number of samples in each batch for mapping.")
     parser.add_argument('--attn_implementation', type=str, default="flash_attention_2", help="Name of the attention implementation library.") # also eager for gemma
     parser.add_argument('--per_device_train_batch_size', type=int, default=2, help="Per device train batch size.")
     parser.add_argument('--per_device_eval_batch_size', type=int, default=8, help="Per device eval batch size.")
@@ -105,25 +106,27 @@ def parse_args():
     args = parser.parse_args()
     return args
 
-def conversational_format(example):
-    instruction = f"""You are an expert in code translation between {LANGUAGE_CONVENTIONS[example['source_language']]} and {LANGUAGE_CONVENTIONS[example['target_language']]}.
-    Below is the source code written in {LANGUAGE_CONVENTIONS[example['source_language']]}:
+def conversational_format_batch(batch):
+    instructions = [
+        f"""You are an expert in code translation between {LANGUAGE_CONVENTIONS[src]} and {LANGUAGE_CONVENTIONS[tgt]}.
+        Below is the source code written in {LANGUAGE_CONVENTIONS[src]}:
 
-    ```
-    {example['source_code']}
-    ```
+        ```
+        {code}
+        ```
 
-    Your task is to translate this {LANGUAGE_CONVENTIONS[example['source_language']]} code into {LANGUAGE_CONVENTIONS[example['target_language']]}.
-    Return only the translated {LANGUAGE_CONVENTIONS[example['target_language']]} code, and include the commend |End-of-Code| at the end.
-    """
+        Your task is to translate this {LANGUAGE_CONVENTIONS[src]} code into {LANGUAGE_CONVENTIONS[tgt]}.
+        Return only the translated {LANGUAGE_CONVENTIONS[tgt]} code, and include the comment |End-of-Code| at the end.
+        """
+        for src, tgt, code in zip(batch['source_language'], batch['target_language'], batch['source_code'])
+    ]
 
-    response = f"```\n{example['target_code']}\n```\n|End-of-Code|"
-    # messages = [
-    #         {'content': instruction, 'role': 'user'},
-    #         {'content': response, 'role': 'assistant'}
-    # ]
+    responses = [
+        f"```\n{target_code}\n```\n|End-of-Code|"
+        for target_code in batch['target_code']
+    ]
 
-    return {'prompt': instruction, 'completion': response}
+    return {'prompt': instructions, 'completion': responses}
 
 def _prepare_non_packed_dataloader(
     args,
@@ -177,6 +180,8 @@ def _prepare_non_packed_dataloader(
     }
     if isinstance(dataset, datasets.Dataset):
         map_kwargs["num_proc"] = args.dataset_num_proc  # this arg is not available for IterableDataset
+        map_kwargs["batch_size"] = args.dataset_batch_size
+        map_kwargs["batched"] = True
     tokenized_dataset = dataset.map(tokenize, **map_kwargs)
 
     return tokenized_dataset
@@ -235,8 +240,10 @@ def sft_load_dataset(args, logger, tokenizer):
         dataset['train'] = concatenate_datasets([dataset_dir_1, dataset_dir_2, dataset_dir_3])
 
     dataset = dataset.map(
-        conversational_format,
+        conversational_format_batch,
         num_proc=args.num_proc_dataset,
+        batch_size=args.dataset_map_batch_size,
+        batched=True,
         desc="Conversational format",
         remove_columns=dataset['train'].column_names
     )
