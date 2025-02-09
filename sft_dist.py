@@ -180,8 +180,6 @@ def _prepare_non_packed_dataloader(
     }
     if isinstance(dataset, datasets.Dataset):
         map_kwargs["num_proc"] = args.dataset_num_proc  # this arg is not available for IterableDataset
-        map_kwargs["batch_size"] = args.dataset_batch_size
-        map_kwargs["batched"] = True
     tokenized_dataset = dataset.map(tokenize, **map_kwargs)
 
     return tokenized_dataset
