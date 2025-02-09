@@ -1,8 +1,8 @@
 import os
 os.environ["HF_HUB_OFFLINE"]='1'
 os.environ["WANDB_MODE"] = "offline"
-os.environ["WANDB_CACHE_DIR"] = "/home/ali/codejudge/sft/.wandbcache"
-os.environ['HF_HOME'] = '/home/ali/codejudge/sft/.hfcache'
+os.environ["WANDB_CACHE_DIR"] = "/home/codejudge/sft/.wandbcache"
+os.environ['HF_HOME'] = '/home/codejudge/sft/.hfcache'
 os.environ['PYTORCH_CUDA_ALLOC_CONF']='expandable_segments:True'
 from typing import Callable, Optional
 import warnings
@@ -60,15 +60,15 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Script for SFT Tuning.")
 
     # Required parameters
-    parser.add_argument('--train_dataset_name', type=str, required=False, help="Name of the training dataset.", default='combine_train_200.jsonl')
-    parser.add_argument('--validation_dataset_name', type=str, required=False, help="Name of validation dataset.", default='combine_validation_small.jsonl')
-    parser.add_argument('--dataset_loc', type=str, required=False, help="Location of the dataset.", default='/home/ali/Research/CodeLLMJudge_RP/data/dataset')
-    parser.add_argument('--llm_path', type=str, required=False, help="Location of LLM model", default='/home/ali/Research/CodeLLMJudge_RP/data/qwen_model')
-    parser.add_argument('--output_loc', type=str, required=False, help="Location of the output.", default='/home/ali/Research/CodeLLMJudge_RP/data/output')
-    parser.add_argument('--log_dir', type=str, required=False, help="Location of the log.", default='/home/ali/Research/CodeLLMJudge_RP/data/logs')
-    parser.add_argument('--run_name', type=str, required=False, help="Run name for experiment.", default='sft')
-    parser.add_argument('--num_proc_dataset', type=int, required=False, help="Number of processor for dataset map.", default=4)
-    parser.add_argument('--dataset_num_proc', type=int, required=False, help="Number of processor to use to tokenize the data.", default=4)
+    parser.add_argument('--train_dataset_name', type=str, required=True, help="Name of the training dataset.")
+    parser.add_argument('--validation_dataset_name', type=str, required=True, help="Name of validation dataset.")
+    parser.add_argument('--dataset_loc', type=str, required=True, help="Location of the dataset.")
+    parser.add_argument('--llm_path', type=str, required=True, help="Location of LLM model")
+    parser.add_argument('--output_loc', type=str, required=True, help="Location of the output.")
+    parser.add_argument('--log_dir', type=str, required=True, help="Location of the log.")
+    parser.add_argument('--run_name', type=str, required=True, help="Run name for experiment.")
+    parser.add_argument('--num_proc_dataset', type=int, required=True, help="Number of processor for dataset map.")
+    parser.add_argument('--dataset_num_proc', type=int, required=True, help="Number of processor to use to tokenize the data.")
     # Default training parameters
     parser.add_argument('--per_device_train_batch_size', type=int, default=2, help="Per device train batch size.")
     parser.add_argument('--per_device_eval_batch_size', type=int, default=8, help="Per device eval batch size.")
