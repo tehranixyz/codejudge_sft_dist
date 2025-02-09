@@ -1,9 +1,8 @@
 import os
-
 os.environ["HF_HUB_OFFLINE"]='1'
 os.environ["WANDB_MODE"] = "offline"
-os.environ["WANDB_CACHE_DIR"] = "/home/codejudge/sft/.wandbcache"
-os.environ['HF_HOME'] = '/home/codejudge/sft/.hfcache'
+os.environ["WANDB_CACHE_DIR"] = "/home/ali/codejudge/sft/.wandbcache"
+os.environ['HF_HOME'] = '/home/ali/codejudge/sft/.hfcache'
 os.environ['PYTORCH_CUDA_ALLOC_CONF']='expandable_segments:True'
 from typing import Callable, Optional
 import warnings
@@ -61,15 +60,15 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Script for SFT Tuning.")
 
     # Required parameters
-    parser.add_argument('--train_dataset_name', type=str, required=True, help="Name of the training dataset.")
-    parser.add_argument('--validation_dataset_name', type=str, required=True, help="Name of validation dataset.")
-    parser.add_argument('--dataset_loc', type=str, required=True, help="Location of the dataset.")
-    parser.add_argument('--llm_path', type=str, required=True, help="Location of LLM model")
-    parser.add_argument('--output_loc', type=str, required=True, help="Location of the output.")
-    parser.add_argument('--log_dir', type=str, required=True, help="Location of the log.")
-    parser.add_argument('--run_name', type=str, required=True, help="Run name for experiment.")
-    parser.add_argument('--num_proc_dataset', type=int, required=True, help="Number of processor for dataset map.")
-    parser.add_argument('--dataset_num_proc', type=int, required=True, help="Number of processor to use to tokenize the data.")
+    parser.add_argument('--train_dataset_name', type=str, required=False, help="Name of the training dataset.", default='combine_train_200.jsonl')
+    parser.add_argument('--validation_dataset_name', type=str, required=False, help="Name of validation dataset.", default='combine_validation_small.jsonl')
+    parser.add_argument('--dataset_loc', type=str, required=False, help="Location of the dataset.", default='/home/ali/Research/CodeLLMJudge_RP/data/dataset')
+    parser.add_argument('--llm_path', type=str, required=False, help="Location of LLM model", default='/home/ali/Research/CodeLLMJudge_RP/data/qwen_model')
+    parser.add_argument('--output_loc', type=str, required=False, help="Location of the output.", default='/home/ali/Research/CodeLLMJudge_RP/data/output')
+    parser.add_argument('--log_dir', type=str, required=False, help="Location of the log.", default='/home/ali/Research/CodeLLMJudge_RP/data/logs')
+    parser.add_argument('--run_name', type=str, required=False, help="Run name for experiment.", default='sft')
+    parser.add_argument('--num_proc_dataset', type=int, required=False, help="Number of processor for dataset map.", default=4)
+    parser.add_argument('--dataset_num_proc', type=int, required=False, help="Number of processor to use to tokenize the data.", default=4)
     # Default training parameters
     parser.add_argument('--per_device_train_batch_size', type=int, default=2, help="Per device train batch size.")
     parser.add_argument('--per_device_eval_batch_size', type=int, default=8, help="Per device eval batch size.")
@@ -101,6 +100,7 @@ def parse_args():
     parser.add_argument('--use_custom_loss', type=bool, default=False, help="Use SFTTrainer with custom loss")
     parser.add_argument('--lora_target_modules', nargs='+', type=str, default=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"], help='A list of modules to apply lora')
     parser.add_argument('--num_train_samples_per_translation', type=int, default=0, help="How many train samples per each translation direction")
+    parser.add_argument('--tokenized', type=bool, default=False, help="Loading tokenized dataset")
     args = parser.parse_args()
     return args
 
@@ -137,7 +137,7 @@ def _prepare_non_packed_dataloader(
     # Inspired from: https://huggingface.co/learn/nlp-course/chapter7/6?fw=pt
     def tokenize(element):
         outputs = processing_class(
-            element[dataset_text_field] if formatting_func is None else formatting_func(element),
+            formatting_func(element),
             add_special_tokens=add_special_tokens,
             truncation=True,
             padding=False,
@@ -182,6 +182,12 @@ def _prepare_non_packed_dataloader(
 
 
 def sft_load_dataset(args, logger, tokenizer):
+
+    if args.tokenized:
+        logger.info(f"Loading tokenized dataset.")
+        dataset_train = load_from_disk(os.path.join(args.dataset_loc, args.train_dataset_name)) 
+        dataset_val = load_from_disk(os.path.join(args.dataset_loc, args.validation_dataset_name))
+        return dataset_train, dataset_val
 
     datafiles = {
         'train': os.path.join(args.dataset_loc, args.train_dataset_name),
