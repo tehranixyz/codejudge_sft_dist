@@ -200,8 +200,8 @@ def _prepare_non_packed_dataloader(
         "remove_columns": dataset.column_names if remove_unused_columns else None,
         "batch_size": args.dataset_map_batch_size,
     }
-    if isinstance(dataset, datasets.Dataset):
-        map_kwargs["num_proc"] = args.dataset_num_proc  # this arg is not available for IterableDataset
+    # if isinstance(dataset, datasets.Dataset):
+    #     map_kwargs["num_proc"] = args.dataset_num_proc  # this arg is not available for IterableDataset
     tokenized_dataset = dataset.map(tokenize, **map_kwargs)
 
     return tokenized_dataset
