@@ -361,7 +361,7 @@ def main():
     model.config.use_cache = False
     model.config.pretraining_tp = 1
 
-    tokenizer=AutoTokenizer.from_pretrained(pretrained_model_name_or_path=args.llm_path, device_map=device_map, trust_remote_code=True)
+    tokenizer=AutoTokenizer.from_pretrained(pretrained_model_name_or_path=args.llm_path, device_map=device_map, trust_remote_code=True, use_fast=True)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = 'right'
 
