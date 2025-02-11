@@ -1,8 +1,8 @@
 import os
 os.environ["HF_HUB_OFFLINE"]='1'
 os.environ["WANDB_MODE"] = "offline"
-os.environ["WANDB_CACHE_DIR"] = "/home/codejudge/sft/.wandbcache"
-os.environ['HF_HOME'] = '/home/codejudge/sft/.hfcache'
+os.environ["WANDB_CACHE_DIR"] = "/home/codejudge/dpo/.wandbcache"
+os.environ['HF_HOME'] = '/home/codejudge/dpo/.hfcache'
 os.environ['PYTORCH_CUDA_ALLOC_CONF']='expandable_segments:True'
 import wandb
 import json
@@ -101,14 +101,13 @@ def parse_args():
 def dpo_load_dataset(args, logger, tokenizer):
 
     datafiles = {
-        'train': os.path.join(args.dataset_loc)
+        'train': os.path.join(args.dataset_loc,args.train_dataset_name),
+        'valid': os.path.join(args.dataset_loc, args.validation_dataset_name),
     }
     dataset = datasets.load_dataset("json", data_files=datafiles)
 
-    dataset = dataset['train'].train_test_split(test_size=0.1)
-
-    dataset_train = dataset['train'].shuffle()
-    dataset_val = dataset['test'].shuffle()
+    dataset_train = dataset['train']
+    dataset_val = dataset['valid']
 
     arr_path_content=args.dataset_loc.split(os.path.sep)
     dataset_train.to_json(args.output_loc+args.train_dataset_name)
@@ -235,7 +234,6 @@ def main():
             save_strategy="steps",
             save_steps=args.save_steps,
             eval_steps=args.eval_steps,
-            # load_best_model_at_end=True,
             num_train_epochs=args.num_train_epochs,
             fp16=not torch.cuda.is_bf16_supported(),
             bf16=torch.cuda.is_bf16_supported(),
@@ -249,14 +247,9 @@ def main():
             ddp_find_unused_parameters=False,
             run_name=args.run_name,
             gradient_checkpointing_kwargs={'use_reentrant':False},
-            #dataset_text_field="text",
-
-            # dataset_batch_size=args.dataset_batch_size,
             max_prompt_length=args.max_seq_length,
             max_length=args.max_seq_length,
             dataset_num_proc=args.dataset_num_proc,
-            # metric_for_best_model="eval_loss",
-            # greater_is_better=False,
         )
 
 
@@ -281,12 +274,6 @@ def main():
             train_dataset=train_ds,
             eval_dataset=validation_ds,
             tokenizer=tokenizer,
-            # max_length=args.max_seq_length,
-            # max_prompt_length=args.max_seq_length,
-            # no attribute
-            # beta=args.dpo_config_beta,
-            # loss_type=args.dpo_config_loss_type,
-
         )
 
 
