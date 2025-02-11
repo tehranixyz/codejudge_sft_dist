@@ -105,14 +105,11 @@ def dpo_load_dataset(args, logger, tokenizer):
         'valid': os.path.join(args.dataset_loc, args.validation_dataset_name),
     }
     dataset = datasets.load_dataset("json", data_files=datafiles)
-
-    dataset_train = dataset['train']
-    dataset_val = dataset['valid']
-
-    arr_path_content=args.dataset_loc.split(os.path.sep)
-    dataset_train.to_json(args.output_loc+args.train_dataset_name)
-    dataset_val.to_json(args.output_loc + args.validation_dataset_name)
+    dataset_train = dataset['train'].shuffle(seed=args.random_seed)
+    dataset_val = dataset['valid'].shuffle(seed=args.random_seed)
     return dataset_train, dataset_val
+
+
 def main():
     args = parse_args()
     os.environ["WANDB_LOG_MODEL"] = "checkpoint"  # log all model checkpoints
@@ -170,7 +167,7 @@ def main():
     model.config.use_cache = False
     model.config.pretraining_tp = 1
 
-    tokenizer=AutoTokenizer.from_pretrained(pretrained_model_name_or_path=args.llm_path, device_map=device_map, trust_remote_code=True)
+    tokenizer=AutoTokenizer.from_pretrained(pretrained_model_name_or_path=args.llm_path, device_map=device_map, trust_remote_code=True, use_fast=True)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = 'right'
 
