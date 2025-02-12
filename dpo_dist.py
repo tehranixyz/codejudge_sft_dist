@@ -30,7 +30,7 @@ import logging
 from rich.logging import RichHandler
 import pandas as pd
 import time
-from peft import LoraConfig
+from peft import LoraConfig, PeftModel
 from transformers import BitsAndBytesConfig
 from accelerate import PartialState
 from accelerate import Accelerator
@@ -59,6 +59,8 @@ def parse_args():
     parser.add_argument('--validation_dataset_name', type=str, required=True, help="Name of validation dataset.")
     parser.add_argument('--dataset_loc', type=str, required=True, help="Location of the dataset.")
     parser.add_argument('--llm_path', type=str, required=True, help="Location of LLM model")
+    parser.add_argument('--sft_peft_path', type=str, required=True, help="Location of Peft Adapters")
+    parser.add_argument('--sft_peft_output_merge', type=str, required=True, help="Location of saving merged SFT PEFT")
     parser.add_argument('--output_loc', type=str, required=True, help="Location of the output.")
     parser.add_argument('--log_dir', type=str, required=True, help="Location of the log.")
     parser.add_argument('--run_name', type=str, required=True, help="Run name for experiment.")
@@ -73,12 +75,14 @@ def parse_args():
     parser.add_argument('--optim', type=str, default="adamw_8bit", help="Define optimizer.")
     parser.add_argument('--num_train_epochs', type=float, default=5, help="num of training epochs")
     parser.add_argument('--bias', type=str, default='none', help="bias")
+    parser.add_argument('--beta', type=float, default=0.1, help="temperature hyperparameter of DPO")
     parser.add_argument('--lora_dropout', type=int, default=0, help="lora_dropout")
     parser.add_argument('--lora_alpha', type=int, default=128, help="lora_alpha")
     parser.add_argument('--lora_rank', type=int, default=64, help="lora rank")
     parser.add_argument('--random_seed', type=int, default=3407, help="random seed")
     parser.add_argument('--random_state', type=int, default=3407, help="random state")
     parser.add_argument('--is_peft', type=bool,default=True, help="Check if the fine-tuning use peft.")
+    parser.add_argument('--merge_peft', type=bool, default=False, help="Whether to merge the peft model to the base model")
     parser.add_argument('--do_eval', type=bool, default=True, help="Check if users want to do evaluation.")
     parser.add_argument('--max_seq_length', type=int, default=8192, help="max sequence length")
     parser.add_argument('--load_in_4bit', type=bool, default=True, help="Load in 4bit mode?")
@@ -93,7 +97,6 @@ def parse_args():
     parser.add_argument('--save_steps', type=int, default=50, help="How often to save the model")
     parser.add_argument('--eval_steps', type=int, default=50, help="How frequent to perform eval")
     parser.add_argument('--split_model', type=bool, default=True, help="split the model across devices")
-    parser.add_argument('--use_custom_loss', type=bool, default=False, help="Use SFTTrainer with custom loss")
     parser.add_argument('--lora_target_modules', nargs='+', type=str, default=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"], help='A list of modules to apply lora')
     args = parser.parse_args()
     return args
@@ -158,13 +161,35 @@ def main():
     device_index = Accelerator().process_index
     device_map = {"": device_index}
 
-    model = AutoModelForCausalLM.from_pretrained(
+    if args.merge_peft:
+        # Loading the base model
+        logger.info(f"Loading base model from {args.llm_path}")
+        model = AutoModelForCausalLM.from_pretrained(
         pretrained_model_name_or_path=args.llm_path,
-        attn_implementation=args.attn_implementation,
-        device_map=device_map,
         quantization_config=bnb_config,
-        revision="refs/pr/1"
-    )
+        attn_implementation="flash_attention_2",
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+        )
+
+        # Loading the PEFT adaptors
+        logger.info(f"Loading SFT PEFT Adapters model from {args.sft_peft_path}")
+        model = PeftModel.from_pretrained(model, args.sft_peft_path)
+        # Merge adapters and base model
+        model = model.merge_and_unload()
+        # Save the merged model for further use
+        logger.info(f"Saving the merged model to: {args.sft_peft_output_merge}")
+        model.save_pretrained(args.sft_peft_output_merge)
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            pretrained_model_name_or_path=args.llm_path,
+            quantization_config=bnb_config,
+            attn_implementation="flash_attention_2",
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+        )
+        logger.info(f"Loading SFT PEFT Adapters model from {args.sft_peft_path}")
+        model = PeftModel.from_pretrained(model, args.sft_peft_path, is_trainable=True)
     model.config.use_cache = False
     model.config.pretraining_tp = 1
 
@@ -220,6 +245,7 @@ def main():
         }
 
     dpo_config = DPOConfig(
+            beta=args.beta,
             per_device_train_batch_size=args.per_device_train_batch_size,
             per_device_eval_batch_size=args.per_device_eval_batch_size,
             gradient_accumulation_steps=args.gradient_accumulation_steps,
@@ -250,32 +276,15 @@ def main():
             dataset_num_proc=args.dataset_num_proc,
         )
 
-
-    if args.use_custom_loss:
-        trainer = CustomDPOTrainer(
-                model=model,
-                args=dpo_config,
-                data_collator=transformers.DataCollatorForSeq2Seq(
-                    tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
-                ),
-                train_dataset=train_ds,
-                eval_dataset=validation_ds,
-                tokenizer=tokenizer,
-                peft_config=peft_config,
-        )
-    else:
-        trainer = DPOTrainer(
-            model,
-            ref_model=None,  # set to none since we use peft
-            peft_config=peft_config,
-            args=dpo_config,
-            train_dataset=train_ds,
-            eval_dataset=validation_ds,
-            tokenizer=tokenizer,
-        )
-
-
-
+    trainer = DPOTrainer(
+        model,
+        ref_model=None,
+        peft_config=peft_config,
+        args=dpo_config,
+        train_dataset=train_ds,
+        eval_dataset=validation_ds,
+        processing_class=tokenizer,
+    )
 
     ###############
     # Training loop
