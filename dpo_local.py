@@ -1,4 +1,9 @@
 import os
+os.environ["HF_HUB_OFFLINE"]='1'
+os.environ["WANDB_MODE"] = "offline"
+os.environ["WANDB_CACHE_DIR"] = "/home/hungphd/git/output_dpo_gemma-2b-it/.wandbcache"
+os.environ['HF_HOME'] = '/home/hungphd/git/output_dpo_gemma-2b-it/.hfcache'
+os.environ['PYTORCH_CUDA_ALLOC_CONF']='expandable_segments:True'
 import wandb
 import json
 import os.path
@@ -18,7 +23,7 @@ import transformers
 from datasets import load_from_disk,load_dataset
 from rich.logging import RichHandler
 from transformers import set_seed
-from trl import SFTTrainer, SFTConfig
+from trl import DPOTrainer,DPOConfig
 # from unsloth import FastLanguageModel
 from transformers import TrainingArguments, AutoModelForCausalLM
 import logging
@@ -42,51 +47,6 @@ LANGUAGE_CONVENTIONS={
 # mistralai/Codestral-22B-v0.1
 
 
-def apply_chat_template(tokenizer, logger, example):
-    instruction = f"""You are an expert in code translation between {LANGUAGE_CONVENTIONS[example['source_language']]} and {LANGUAGE_CONVENTIONS[example['target_language']]}.
-    Below is the source code written in {LANGUAGE_CONVENTIONS[example['source_language']]}:
-
-    ```
-    {example['source_code']}
-    ```
-
-    Your task is to translate this {LANGUAGE_CONVENTIONS[example['source_language']]} code into {LANGUAGE_CONVENTIONS[example['target_language']]}.
-    Return only the translated {LANGUAGE_CONVENTIONS[example['target_language']]} code, and include the commend |End-of-Code| at the end.
-    """
-
-    response = f"```\n{example['target_code']}\n```\n|End-of-Code|"
-    messages = [
-            {'content': instruction, 'role': 'user'},
-            {'content': response, 'role': 'assistant'}
-    ]
-    if tokenizer.chat_template:
-        # logger.info(f"Using tokenizer chat template {tokenizer.chat_template}!")
-        example["text"] = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    else:
-        raise ValueError("For now we do not support tokenizers without chat template!")
-        logger.info("No tokenizer chat template exits, using default format!")
-        example["text"] = f"Translate this following code snippet in {LANGUAGE_CONVENTIONS[example['source_language']]} to a code snippet in {LANGUAGE_CONVENTIONS[example['target_language']]}:\n\n'''\n{example['source_code']}\n'''\n\n\nAnswer:\n'''\n{example['target_code']}\n'''"
-    return example
-
-def conversational_format(example):
-    instruction = f"""You are an expert in code translation between {LANGUAGE_CONVENTIONS[example['source_language']]} and {LANGUAGE_CONVENTIONS[example['target_language']]}.
-    Below is the source code written in {LANGUAGE_CONVENTIONS[example['source_language']]}:
-
-    ```
-    {example['source_code']}
-    ```
-
-    Your task is to translate this {LANGUAGE_CONVENTIONS[example['source_language']]} code into {LANGUAGE_CONVENTIONS[example['target_language']]}.
-    Return only the translated {LANGUAGE_CONVENTIONS[example['target_language']]} code, and include the commend |End-of-Code| at the end.
-    """
-
-    response = f"```\n{example['target_code']}\n```\n|End-of-Code|"
-    # messages = [
-    #         {'content': instruction, 'role': 'user'},
-    #         {'content': response, 'role': 'assistant'}
-    # ]
-
-    return {'prompt': instruction, 'completion': response}
 
 
 
@@ -104,9 +64,6 @@ def parse_args():
     parser.add_argument('--run_name', type=str, required=True, help="Run name for experiment.")
     parser.add_argument('--num_proc_dataset', type=int, required=True, help="Number of processor for dataset map.")
     parser.add_argument('--dataset_num_proc', type=int, required=True, help="Number of processor to use to tokenize the data.")
-    parser.add_argument('--WANDB_CACHE_DIR', type=str, required=True, help="Wandb cache dir")
-    parser.add_argument('--HF_HOME', type=str, required=True, help="HF HOME LOCATION")
-
     # Default training parameters
     parser.add_argument('--per_device_train_batch_size', type=int, default=2, help="Per device train batch size.")
     parser.add_argument('--per_device_eval_batch_size', type=int, default=8, help="Per device eval batch size.")
@@ -141,51 +98,24 @@ def parse_args():
     return args
 
 
-def sft_load_dataset(args, logger, tokenizer):
+def dpo_load_dataset(args, logger, tokenizer):
 
     datafiles = {
-        'train': os.path.join(args.dataset_loc, args.train_dataset_name),
-        'validation': os.path.join(args.dataset_loc, args.validation_dataset_name)
+        'train': os.path.join(args.dataset_loc,args.train_dataset_name),
+        'valid': os.path.join(args.dataset_loc, args.validation_dataset_name),
     }
     dataset = datasets.load_dataset("json", data_files=datafiles)
 
-    dataset = dataset.map(
-        conversational_format,
-        num_proc=args.num_proc_dataset,
-        desc="Conversational format",
-        remove_columns=dataset['train'].column_names
-    )
-    print(dataset)
+    dataset_train = dataset['train']
+    dataset_val = dataset['valid']
 
-    # partial_apply_chat_template = partial(apply_chat_template,  tokenizer, logger)
-
-    # logger.info("Loaded datasets. Apply chat template!")
-
-    # dataset = dataset.map(
-    #     partial_apply_chat_template,
-    #     num_proc=args.num_proc_dataset,
-    #     desc="Applying chat template!!!"
-    # )
-
-    # for index in random.sample(range(len(dataset['train'])), 3):
-    #    logger.info(f"Sample {index} of the processed training set:\n\n{dataset['train']['text']}")
-    logger.info("Done with dataset!")
-
-    dataset_train = dataset['train'].shuffle()
-    dataset_val = dataset['validation'].shuffle()
-
+    arr_path_content=args.dataset_loc.split(os.path.sep)
+    dataset_train.to_json(args.output_loc+args.train_dataset_name)
+    dataset_val.to_json(args.output_loc + args.validation_dataset_name)
     return dataset_train, dataset_val
-
-
-
 def main():
     args = parse_args()
     os.environ["WANDB_LOG_MODEL"] = "checkpoint"  # log all model checkpoints
-    os.environ["HF_HUB_OFFLINE"] = '1'
-    os.environ["WANDB_MODE"] = "offline"
-    os.environ["WANDB_CACHE_DIR"] = args.WANDB_CACHE_DIR
-    os.environ['HF_HOME'] = args.HF_HOME
-    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
     wandb.init(project="codejudge", config=vars(args), name=f"codejudge-{args.run_name}-{time.strftime('%Y%m%d-%H%M%S')}")
 
@@ -246,7 +176,7 @@ def main():
 
     # Loading training and validation datasets.
     logger.info(f"Loading training {args.train_dataset_name} and validation dataset {args.validation_dataset_name}")
-    train_ds, validation_ds = sft_load_dataset(args, logger, tokenizer)
+    train_ds, validation_ds = dpo_load_dataset(args, logger, tokenizer)
 
     peft_config = None
     if args.is_peft:
@@ -261,9 +191,9 @@ def main():
             target_modules=args.lora_target_modules,
         )
 
-    logger.info("Creating SFT trainer!")
+    logger.info("Creating DPO trainer!")
 
-    class CustomSFTTrainer(SFTTrainer):
+    class CustomDPOTrainer(DPOTrainer):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
 
@@ -291,7 +221,7 @@ def main():
             'fsdp_use_orig_params': True,
         }
 
-    sft_config = SFTConfig(
+    dpo_config = DPOConfig(
             per_device_train_batch_size=args.per_device_train_batch_size,
             per_device_eval_batch_size=args.per_device_eval_batch_size,
             gradient_accumulation_steps=args.gradient_accumulation_steps,
@@ -304,7 +234,6 @@ def main():
             save_strategy="steps",
             save_steps=args.save_steps,
             eval_steps=args.eval_steps,
-            # load_best_model_at_end=True,
             num_train_epochs=args.num_train_epochs,
             fp16=not torch.cuda.is_bf16_supported(),
             bf16=torch.cuda.is_bf16_supported(),
@@ -318,18 +247,16 @@ def main():
             ddp_find_unused_parameters=False,
             run_name=args.run_name,
             gradient_checkpointing_kwargs={'use_reentrant':False},
-            #dataset_text_field="text",
-            dataset_batch_size=args.dataset_batch_size,
-            max_seq_length=args.max_seq_length,
+            max_prompt_length=args.max_seq_length,
+            max_length=args.max_seq_length,
             dataset_num_proc=args.dataset_num_proc,
-            # metric_for_best_model="eval_loss",
-            # greater_is_better=False,
         )
 
+
     if args.use_custom_loss:
-        trainer = CustomSFTTrainer(
+        trainer = CustomDPOTrainer(
                 model=model,
-                args=sft_config,
+                args=dpo_config,
                 data_collator=transformers.DataCollatorForSeq2Seq(
                     tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
                 ),
@@ -339,18 +266,18 @@ def main():
                 peft_config=peft_config,
         )
     else:
-        trainer = SFTTrainer(
-                model=model,
-                args=sft_config,
-                # data_collator=transformers.DataCollatorForSeq2Seq(
-                #     tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
-                # ),
-                train_dataset=train_ds,
-                eval_dataset=validation_ds,
-                tokenizer=tokenizer,
-                #packing=True,
-                peft_config=peft_config,
+        trainer = DPOTrainer(
+            model,
+            ref_model=None,  # set to none since we use peft
+            peft_config=peft_config,
+            args=dpo_config,
+            train_dataset=train_ds,
+            eval_dataset=validation_ds,
+            tokenizer=tokenizer,
         )
+
+
+
 
     ###############
     # Training loop
@@ -385,4 +312,3 @@ def main():
     print('end')
 
 main()
-
