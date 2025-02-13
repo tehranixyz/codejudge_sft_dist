@@ -59,7 +59,7 @@ def parse_args():
     parser.add_argument('--validation_dataset_name', type=str, required=True, help="Name of validation dataset.")
     parser.add_argument('--dataset_loc', type=str, required=True, help="Location of the dataset.")
     parser.add_argument('--llm_path', type=str, required=True, help="Location of LLM model")
-    parser.add_argument('--sft_peft_path', type=str, required=False, help="Location of LLM model", default='/home/ali/Research/CodeLLMJudge_RP/data/output')
+    parser.add_argument('--sft_peft_path', type=str, required=True, help="Location of SFT Model")
     parser.add_argument('--output_loc', type=str, required=True, help="Location of the output.")
     parser.add_argument('--log_dir', type=str, required=True, help="Location of the log.")
     parser.add_argument('--run_name', type=str, required=True, help="Run name for experiment.")
