@@ -1,8 +1,8 @@
 import os
 os.environ["HF_HUB_OFFLINE"]='1'
 os.environ["WANDB_MODE"] = "offline"
-os.environ["WANDB_CACHE_DIR"] = "/home/codejudge/dpo/.wandbcache"
-os.environ['HF_HOME'] = '/home/codejudge/dpo/.hfcache'
+os.environ["WANDB_CACHE_DIR"] = "/home/codejudge/sft/.wandbcache"
+os.environ['HF_HOME'] = '/home/codejudge/sft/.hfcache'
 os.environ['PYTORCH_CUDA_ALLOC_CONF']='expandable_segments:True'
 import wandb
 import json
@@ -59,8 +59,7 @@ def parse_args():
     parser.add_argument('--validation_dataset_name', type=str, required=True, help="Name of validation dataset.")
     parser.add_argument('--dataset_loc', type=str, required=True, help="Location of the dataset.")
     parser.add_argument('--llm_path', type=str, required=True, help="Location of LLM model")
-    parser.add_argument('--sft_peft_path', type=str, required=True, help="Location of Peft Adapters")
-    parser.add_argument('--sft_peft_output_merge', type=str, required=True, help="Location of saving merged SFT PEFT")
+    parser.add_argument('--sft_peft_path', type=str, required=False, help="Location of LLM model", default='/home/ali/Research/CodeLLMJudge_RP/data/output')
     parser.add_argument('--output_loc', type=str, required=True, help="Location of the output.")
     parser.add_argument('--log_dir', type=str, required=True, help="Location of the log.")
     parser.add_argument('--run_name', type=str, required=True, help="Run name for experiment.")
@@ -81,8 +80,7 @@ def parse_args():
     parser.add_argument('--lora_rank', type=int, default=64, help="lora rank")
     parser.add_argument('--random_seed', type=int, default=3407, help="random seed")
     parser.add_argument('--random_state', type=int, default=3407, help="random state")
-    parser.add_argument('--is_peft', type=bool,default=True, help="Check if the fine-tuning use peft.")
-    parser.add_argument('--merge_peft', type=bool, default=False, help="Whether to merge the peft model to the base model")
+    parser.add_argument('--is_peft', type=bool,default=False, help="Check if the fine-tuning use peft.")
     parser.add_argument('--do_eval', type=bool, default=True, help="Check if users want to do evaluation.")
     parser.add_argument('--max_seq_length', type=int, default=8192, help="max sequence length")
     parser.add_argument('--load_in_4bit', type=bool, default=True, help="Load in 4bit mode?")
@@ -161,35 +159,14 @@ def main():
     device_index = Accelerator().process_index
     device_map = {"": device_index}
 
-    if args.merge_peft:
-        # Loading the base model
-        logger.info(f"Loading base model from {args.llm_path}")
-        model = AutoModelForCausalLM.from_pretrained(
-        pretrained_model_name_or_path=args.llm_path,
-        quantization_config=bnb_config,
-        attn_implementation="flash_attention_2",
-        torch_dtype=torch.bfloat16,
-        device_map="auto",
-        )
-
-        # Loading the PEFT adaptors
-        logger.info(f"Loading SFT PEFT Adapters model from {args.sft_peft_path}")
-        model = PeftModel.from_pretrained(model, args.sft_peft_path)
-        # Merge adapters and base model
-        model = model.merge_and_unload()
-        # Save the merged model for further use
-        logger.info(f"Saving the merged model to: {args.sft_peft_output_merge}")
-        model.save_pretrained(args.sft_peft_output_merge)
-    else:
-        model = AutoModelForCausalLM.from_pretrained(
+    model = AutoModelForCausalLM.from_pretrained(
             pretrained_model_name_or_path=args.llm_path,
+            attn_implementation=args.attn_implementation,
+            device_map=device_map,
             quantization_config=bnb_config,
-            attn_implementation="flash_attention_2",
-            torch_dtype=torch.bfloat16,
-            device_map="auto",
         )
-        logger.info(f"Loading SFT PEFT Adapters model from {args.sft_peft_path}")
-        model = PeftModel.from_pretrained(model, args.sft_peft_path, is_trainable=True)
+    model.load_adapter(args.sft_peft_path, is_trainable=True)
+
     model.config.use_cache = False
     model.config.pretraining_tp = 1
 
@@ -215,21 +192,6 @@ def main():
         )
 
     logger.info("Creating DPO trainer!")
-
-    class CustomDPOTrainer(DPOTrainer):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-
-        def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
-            # Forward pass with labels to compute the loss
-            outputs = model(**inputs, labels=inputs["input_ids"], return_dict=True)
-            loss = outputs.loss  # Extract only the loss
-
-            if return_outputs:
-                return loss, outputs
-            else:
-                return loss
-
 
     fsdp_config={
             'fsdp_activation_checkpointing': True,
@@ -290,6 +252,7 @@ def main():
     # Training loop
     ###############
     logger.info("*** Train ***")
+    logger.info(f"Number of training parameters: {trainer.get_num_trainable_parameters()}")
     train_result = trainer.train()
     metrics = train_result.metrics
     metrics['train_samples'] = len(train_ds)
