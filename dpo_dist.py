@@ -68,7 +68,7 @@ def parse_args():
     parser.add_argument('--attn_implementation', type=str, default="flash_attention_2", help="Name of the attention implementation library.") # also eager for gemma
     parser.add_argument('--per_device_train_batch_size', type=int, default=2, help="Per device train batch size.")
     parser.add_argument('--per_device_eval_batch_size', type=int, default=2, help="Per device eval batch size.")
-    parser.add_argument('--gradient_accumulation_steps', type=int, default= , help="Gradient accumulation steps.")
+    parser.add_argument('--gradient_accumulation_steps', type=int, default=4 , help="Gradient accumulation steps.")
     parser.add_argument('--warmup_ratio', type=float, default=0.1, help="Warmup ratio")
     parser.add_argument('--optim', type=str, default="adamw_8bit", help="Define optimizer.")
     parser.add_argument('--num_train_epochs', type=float, default=5, help="num of training epochs")
