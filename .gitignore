@@ -1,2 +1,14 @@
 data
 wandb
+temp_file.py
+.gitignore
+trainset_150k
+trainset_300k
+dataset_sampling.py
+combined_validation_balanced.jsonl
+load_data.py
+combine_trainset_300k.jsonl
+300K_tokenized
+Valid_tokenized
+new_tokenized
+downloader.py

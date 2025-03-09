@@ -63,13 +63,12 @@ def parse_args():
     parser.add_argument('--output_loc', type=str, required=True, help="Location of the output.")
     parser.add_argument('--log_dir', type=str, required=True, help="Location of the log.")
     parser.add_argument('--run_name', type=str, required=True, help="Run name for experiment.")
-    parser.add_argument('--num_proc_dataset', type=int, required=True, help="Number of processor for dataset map.")
     parser.add_argument('--dataset_num_proc', type=int, required=True, help="Number of processor to use to tokenize the data.")
     # Default training parameters
     parser.add_argument('--attn_implementation', type=str, default="flash_attention_2", help="Name of the attention implementation library.") # also eager for gemma
     parser.add_argument('--per_device_train_batch_size', type=int, default=2, help="Per device train batch size.")
-    parser.add_argument('--per_device_eval_batch_size', type=int, default=8, help="Per device eval batch size.")
-    parser.add_argument('--gradient_accumulation_steps', type=int, default=4, help="Gradient accumulation steps.")
+    parser.add_argument('--per_device_eval_batch_size', type=int, default=2, help="Per device eval batch size.")
+    parser.add_argument('--gradient_accumulation_steps', type=int, default= , help="Gradient accumulation steps.")
     parser.add_argument('--warmup_ratio', type=float, default=0.1, help="Warmup ratio")
     parser.add_argument('--optim', type=str, default="adamw_8bit", help="Define optimizer.")
     parser.add_argument('--num_train_epochs', type=float, default=5, help="num of training epochs")
@@ -84,7 +83,7 @@ def parse_args():
     parser.add_argument('--do_eval', type=bool, default=True, help="Check if users want to do evaluation.")
     parser.add_argument('--max_seq_length', type=int, default=8192, help="max sequence length")
     parser.add_argument('--load_in_4bit', type=bool, default=True, help="Load in 4bit mode?")
-    parser.add_argument('--use_nested_quant', type=bool, default=False, help="whether to use nested quant")
+    parser.add_argument('--use_nested_quant', type=bool, default=True, help="whether to use nested quant")
     parser.add_argument('--bnb_4bit_quant_type', type=str, default="nf4", help="quantization type for int4")
     parser.add_argument('--bnb_4bit_compute_dtype', type=str, default="float16", help="int4 compute type")
     parser.add_argument('--logging_steps', type=int, default=1, help="Logging steps.")
@@ -96,6 +95,7 @@ def parse_args():
     parser.add_argument('--eval_steps', type=int, default=50, help="How frequent to perform eval")
     parser.add_argument('--split_model', type=bool, default=True, help="split the model across devices")
     parser.add_argument('--lora_target_modules', nargs='+', type=str, default=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"], help='A list of modules to apply lora')
+    parser.add_argument('--sharding_strategy', type=int, default=1, help="Sharding strategy [1, 2, 3, 4, 5]")
     args = parser.parse_args()
     return args
 
@@ -158,12 +158,14 @@ def main():
 
     device_index = Accelerator().process_index
     device_map = {"": device_index}
+    torch.distributed.barrier(device_ids=[device_index])
 
     model = AutoModelForCausalLM.from_pretrained(
             pretrained_model_name_or_path=args.llm_path,
             attn_implementation=args.attn_implementation,
             device_map=device_map,
             quantization_config=bnb_config,
+            torch_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
         )
     model.load_adapter(args.sft_peft_path, is_trainable=True)
 
@@ -200,7 +202,7 @@ def main():
             'fsdp_cpu_ram_efficient_loading': True,
             'fsdp_forward_prefetch': False,
             'fsdp_offload_params': True,
-            'fsdp_sharding_strategy': 1,
+            'fsdp_sharding_strategy': args.sharding_strategy,
             'fsdp_state_dict_type': 'SHARDED_STATE_DICT',
             'fsdp_sync_module_states': True,
             'fsdp_use_orig_params': True,
@@ -233,7 +235,7 @@ def main():
             ddp_find_unused_parameters=False,
             run_name=args.run_name,
             gradient_checkpointing_kwargs={'use_reentrant':False},
-            max_prompt_length=args.max_seq_length,
+            max_prompt_length=args.max_seq_length//2,
             max_length=args.max_seq_length,
             dataset_num_proc=args.dataset_num_proc,
         )
