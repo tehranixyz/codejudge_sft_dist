@@ -83,7 +83,7 @@ def parse_args():
     parser.add_argument('--do_eval', type=bool, default=True, help="Check if users want to do evaluation.")
     parser.add_argument('--max_seq_length', type=int, default=8192, help="max sequence length")
     parser.add_argument('--load_in_4bit', type=bool, default=True, help="Load in 4bit mode?")
-    parser.add_argument('--use_nested_quant', type=bool, default=True, help="whether to use nested quant")
+    parser.add_argument('--use_nested_quant', type=bool, default=False, help="whether to use nested quant")
     parser.add_argument('--bnb_4bit_quant_type', type=str, default="nf4", help="quantization type for int4")
     parser.add_argument('--bnb_4bit_compute_dtype', type=str, default="float16", help="int4 compute type")
     parser.add_argument('--logging_steps', type=int, default=1, help="Logging steps.")
@@ -166,6 +166,7 @@ def main():
             device_map=device_map,
             quantization_config=bnb_config,
             torch_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+            low_cpu_mem_usage=True
         )
     model.load_adapter(args.sft_peft_path, is_trainable=True)
 
